@@ -24,6 +24,37 @@ sed -i 's|if (urlFromIntent == null) {|if (!android.webkit.URLUtil.isNetworkUrl(
 sed -i 's|static Intent maybeModifyCustomTabIntents(Context context, Intent intent) {|static Intent maybeModifyCustomTabIntents(Context context, Intent intent) { if (!android.webkit.URLUtil.isNetworkUrl(IntentHandler.getUrlFromIntent(intent))) { return intent; }|' titanium/chromium_src/chrome/android/java/src/org/chromium/chrome/browser/LaunchIntentDispatcherHooks.java # scheme guard
 sed -i 's|readBoolean(getSettingsPreferenceKey(moduleType), true)|readBoolean(getSettingsPreferenceKey(moduleType), !HomeModulesUtils.belongsToEducationalTipModule(moduleType))|' chrome/browser/magic_stack/android/java/src/org/chromium/chrome/browser/magic_stack/HomeModulesConfigManager.java # ntp
 
+# ntp: raise the pinned-site cap from 8 to 16
+#
+# "8 pinned websites" is enforced by three independent limits that must move
+# together. Raising only the Java side would render a ninth tile slot that the
+# C++ backend then refuses to persist, because CustomLinksManagerImpl defaults
+# its max_links to ntp_tiles::kMaxNumCustomLinks (custom_links_manager_impl.h).
+# kMaxNumTiles is the NTP display ceiling and must be >= the new value.
+#
+# Upstream warns that MAX_TILE_COUNT is coupled to UMA histograms. That is moot
+# here: args.gn sets enable_reporting = false.
+#
+# Set TITANIUM_MAX_TILES=8 in the build environment to restore upstream behaviour.
+export TITANIUM_MAX_TILES=${TITANIUM_MAX_TILES:-16}
+SUGGESTIONS_CONFIG=chrome/android/java/src/org/chromium/chrome/browser/suggestions/SuggestionsConfig.java
+NTP_CONSTANTS_CC=components/ntp_tiles/constants.cc
+NTP_CONSTANTS_H=components/ntp_tiles/constants.h
+# kMaxNumTiles is a display ceiling, upstream 10. Only ever raise it: lowering it
+# below upstream would silently truncate the NTP even at the default cap.
+TITANIUM_MAX_TILES_CEILING=$TITANIUM_MAX_TILES
+[ "$TITANIUM_MAX_TILES" -lt 10 ] && TITANIUM_MAX_TILES_CEILING=10
+patch_require "$SUGGESTIONS_CONFIG" 'public static final int MAX_TILE_COUNT = 8;'
+patch_require "$SUGGESTIONS_CONFIG" 'public static final int MAX_NUM_CUSTOM_LINKS = 8;'
+patch_require "$NTP_CONSTANTS_CC" 'const size_t kMaxNumCustomLinks = 8;'
+patch_require "$NTP_CONSTANTS_CC" 'const size_t kMaxNumMostVisited = 8;'
+patch_require "$NTP_CONSTANTS_H" 'const int kMaxNumTiles = 10;'
+sed -i "s|public static final int MAX_TILE_COUNT = 8;|public static final int MAX_TILE_COUNT = $TITANIUM_MAX_TILES;|" $SUGGESTIONS_CONFIG # ntp: tile cap
+sed -i "s|public static final int MAX_NUM_CUSTOM_LINKS = 8;|public static final int MAX_NUM_CUSTOM_LINKS = $TITANIUM_MAX_TILES;|" $SUGGESTIONS_CONFIG # ntp: tile cap
+sed -i "s|const size_t kMaxNumCustomLinks = 8;|const size_t kMaxNumCustomLinks = $TITANIUM_MAX_TILES;|" $NTP_CONSTANTS_CC # ntp: tile cap (Android/iOS branch)
+sed -i "s|const size_t kMaxNumMostVisited = 8;|const size_t kMaxNumMostVisited = $TITANIUM_MAX_TILES;|" $NTP_CONSTANTS_CC # ntp: tile cap
+sed -i "s|const int kMaxNumTiles = 10;|const int kMaxNumTiles = $TITANIUM_MAX_TILES_CEILING;|" $NTP_CONSTANTS_H # ntp: tile cap ceiling
+
 # sed -i 's|int ExpirationMilestoneForFlag(const char\* flag) {|int ExpirationMilestoneForFlag(const char* flag) { if ((true)) return -1;|' chrome/browser/unexpire_flags.cc
 for flag in "align-wakeups" "android-bottom-bar" "cct-open-in-browser-button-if-allowed-by-embedder" "darken-websites-checkbox-in-themes-setting" "enable-accessibility-sequential-focus" "enforce-incognito-isolation" "inline-pdf-v2" "jump-start-omnibox" "offline-auto-fetch" "use-fullscreen-insets-api"; do
     sed -i "/\"name\": \"$flag\"/,/}/ s/\"expiry_milestone\": [0-9]\+/\"expiry_milestone\": -1/" chrome/browser/flag-metadata.json
