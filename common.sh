@@ -27,3 +27,23 @@ sign_aab() {
 version_lt() {
   [ "$1" != "$2" ] && [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -n1)" = "$1" ]
 }
+
+# Abort the build when a sed anchor string is absent from its target file.
+#
+# patch.sh is ~170 lines of blind `sed -i` against Chromium sources. When a
+# Chromium version bump renames or reformats an anchor, sed exits 0 having
+# changed nothing, and the result is a signed release that silently lacks the
+# patch. Failing here turns that into a loud build error instead.
+patch_require() {
+    local file="$1" pattern="$2"
+    if [ ! -f "$file" ]; then
+        echo "patch.sh: MISSING FILE  $file" >&2
+        exit 1
+    fi
+    if ! grep -qF -- "$pattern" "$file"; then
+        echo "patch.sh: MISSING ANCHOR in $file" >&2
+        echo "          expected: $pattern" >&2
+        echo "          Chromium sources moved; update this patch." >&2
+        exit 1
+    fi
+}
